@@ -128,21 +128,6 @@ const HomePage = () => {
 
   const isLoading = loadingTareas || loadingDeudas || loadingGym || loadingRutinas;
 
-  if (isLoading) {
-    return (
-      <div className="px-4 pt-12 pb-24 space-y-4">
-        <Skeleton className="h-10 w-48" />
-        <div className="grid grid-cols-2 gap-3">
-          <Skeleton className="h-36 rounded-2xl col-span-2" />
-          <Skeleton className="h-28 rounded-2xl" />
-          <Skeleton className="h-28 rounded-2xl" />
-          <Skeleton className="h-24 rounded-2xl" />
-          <Skeleton className="h-24 rounded-2xl" />
-        </div>
-      </div>
-    );
-  }
-
   // quickTasks: primeras 3 tareas urgentes/pendientes para el widget
   const quickTasks = useMemo(() =>
     tareasPendientes.slice(0, 5).map(t => ({
@@ -156,30 +141,9 @@ const HomePage = () => {
     localStorage.setItem("dashboard-widgets", JSON.stringify(widgets));
   }, [widgets]);
 
-  const toggleTask = (id: number) => {
-    const task = quickTasks.find(t => t.id === id);
-    if (task && !task.done) {
-      triggerMoodEvent("celebrating", 4000);
-    }
-    actualizarTarea.mutate({ id, updates: { completada: !task?.done } });
-  };
-
   const [jarvisMode, setJarvisMode] = useState(() => {
     return localStorage.getItem("jarvis-mode") !== "false";
   });
-
-  const toggleWidgetVisibility = (id: WidgetId) => {
-    setWidgets(prev => prev.map(w => w.id === id ? { ...w, visible: !w.visible } : w));
-  };
-
-  const cycleWidgetSize = (id: WidgetId) => {
-    const sizes: WidgetSize[] = ["compact", "normal", "expanded"];
-    setWidgets(prev => prev.map(w => {
-      if (w.id !== id) return w;
-      const idx = sizes.indexOf(w.size);
-      return { ...w, size: sizes[(idx + 1) % sizes.length] };
-    }));
-  };
 
   useEffect(() => {
     localStorage.setItem("jarvis-mode", String(jarvisMode));
@@ -287,15 +251,6 @@ const HomePage = () => {
       iconColor: `text-primary`,
     })), [rutinasDelDia]);
 
-  const visibleWidgets = jarvisMode ? getSmartOrder(widgets.filter(w => w.visible)) : widgets.filter(w => w.visible);
-
-  const sizeLabels: Record<WidgetSize, string> = { compact: "S", normal: "M", expanded: "L" };
-
-  // Get widget size config
-  const getWidgetSize = (id: WidgetId): WidgetSize => {
-    return widgets.find(w => w.id === id)?.size || "normal";
-  };
-
   // Jarvis status lines
   const jarvisStatusLines = useMemo(() => {
     const tod = getTimeOfDay();
@@ -326,6 +281,51 @@ const HomePage = () => {
     }, 5000);
     return () => clearInterval(timer);
   }, [jarvisStatusLines]);
+
+  if (isLoading) {
+    return (
+      <div className="px-4 pt-12 pb-24 space-y-4">
+        <Skeleton className="h-10 w-48" />
+        <div className="grid grid-cols-2 gap-3">
+          <Skeleton className="h-36 rounded-2xl col-span-2" />
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-28 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+          <Skeleton className="h-24 rounded-2xl" />
+        </div>
+      </div>
+    );
+  }
+
+  const toggleTask = (id: number) => {
+    const task = quickTasks.find(t => t.id === id);
+    if (task && !task.done) {
+      triggerMoodEvent("celebrating", 4000);
+    }
+    actualizarTarea.mutate({ id, updates: { completada: !task?.done } });
+  };
+
+  const toggleWidgetVisibility = (id: WidgetId) => {
+    setWidgets(prev => prev.map(w => w.id === id ? { ...w, visible: !w.visible } : w));
+  };
+
+  const cycleWidgetSize = (id: WidgetId) => {
+    const sizes: WidgetSize[] = ["compact", "normal", "expanded"];
+    setWidgets(prev => prev.map(w => {
+      if (w.id !== id) return w;
+      const idx = sizes.indexOf(w.size);
+      return { ...w, size: sizes[(idx + 1) % sizes.length] };
+    }));
+  };
+
+  const visibleWidgets = jarvisMode ? getSmartOrder(widgets.filter(w => w.visible)) : widgets.filter(w => w.visible);
+
+  const sizeLabels: Record<WidgetSize, string> = { compact: "S", normal: "M", expanded: "L" };
+
+  // Get widget size config
+  const getWidgetSize = (id: WidgetId): WidgetSize => {
+    return widgets.find(w => w.id === id)?.size || "normal";
+  };
 
   const moveWidget = (id: WidgetId, direction: "up" | "down") => {
     setWidgets(prev => {

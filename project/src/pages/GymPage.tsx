@@ -23,22 +23,6 @@ const GymPage = () => {
     rutinasPersonalizadas, crearLog, crearEjercicio, isLoading,
   } = useGym();
 
-  if (isLoading) {
-    return (
-      <div className="px-4 pt-12 pb-24 space-y-4">
-        <Skeleton className="h-8 w-28" />
-        <Skeleton className="h-48 w-full rounded-2xl" />
-        <div className="flex gap-2">
-          <Skeleton className="h-9 flex-1 rounded-xl" />
-          <Skeleton className="h-9 flex-1 rounded-xl" />
-        </div>
-        {[1, 2, 3].map(i => (
-          <Skeleton key={i} className="h-16 w-full rounded-2xl" />
-        ))}
-      </div>
-    );
-  }
-
   const [tab, setTab] = useState<"calendar" | "routines">("calendar");
   const [selectedExercise, setSelectedExercise] = useState<string | null>(null);
   const [showNewRoutine, setShowNewRoutine] = useState(false);
@@ -83,6 +67,22 @@ const GymPage = () => {
         sets: `${e.series_sugeridas ?? 3}×${e.repes_sugeridas ?? 10}`,
       })),
     })), [rutinasPersonalizadas]);
+
+  if (isLoading) {
+    return (
+      <div className="px-4 pt-12 pb-24 space-y-4">
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-48 w-full rounded-2xl" />
+        <div className="flex gap-2">
+          <Skeleton className="h-9 flex-1 rounded-xl" />
+          <Skeleton className="h-9 flex-1 rounded-xl" />
+        </div>
+        {[1, 2, 3].map(i => (
+          <Skeleton key={i} className="h-16 w-full rounded-2xl" />
+        ))}
+      </div>
+    );
+  }
 
   const activeDays = [1, 2, 3, 4, 5, 6];
   const today = 7;

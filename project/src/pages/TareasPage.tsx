@@ -92,22 +92,6 @@ const numToPriority: Record<number, Priority> = { 0: "baja", 1: "media", 2: "alt
 const TareasPage = () => {
   const { tareas, isLoading, crear, actualizar, eliminar } = useTareas();
 
-  if (isLoading) {
-    return (
-      <div className="px-4 pt-12 pb-24 space-y-4">
-        <Skeleton className="h-8 w-40" />
-        <div className="flex gap-3">
-          <Skeleton className="h-20 flex-1 rounded-2xl" />
-          <Skeleton className="h-20 flex-1 rounded-2xl" />
-          <Skeleton className="h-20 flex-1 rounded-2xl" />
-        </div>
-        {[1, 2, 3, 4].map(i => (
-          <Skeleton key={i} className="h-16 w-full rounded-2xl" />
-        ))}
-      </div>
-    );
-  }
-
   // Adaptar Tarea (DB) → Task (UI)
   const tasks: Task[] = useMemo(() => tareas.map(t => ({
     id: t.id!,
@@ -184,6 +168,22 @@ const TareasPage = () => {
   const progress = tasks.length ? Math.round((completed.length / tasks.length) * 100) : 0;
   const overdueCount = useMemo(() => pending.filter(t => isOverdue(t.dueDate)).length, [pending]);
 
+  if (isLoading) {
+    return (
+      <div className="px-4 pt-12 pb-24 space-y-4">
+        <Skeleton className="h-8 w-40" />
+        <div className="flex gap-3">
+          <Skeleton className="h-20 flex-1 rounded-2xl" />
+          <Skeleton className="h-20 flex-1 rounded-2xl" />
+          <Skeleton className="h-20 flex-1 rounded-2xl" />
+        </div>
+        {[1, 2, 3, 4].map(i => (
+          <Skeleton key={i} className="h-16 w-full rounded-2xl" />
+        ))}
+      </div>
+    );
+  }
+
   // ── Actions ──
   const toggleTask = (id: number) => {
     const task = tasks.find(t => t.id === id);
@@ -249,7 +249,7 @@ const TareasPage = () => {
   const toggleReminder = (id: number) => setReminders(prev => prev.map(r => r.id === id ? { ...r, active: !r.active } : r));
 
   // ── Swipe ──
-  const handleDragEnd = (id: number, _: any, info: PanInfo) => {
+  const handleDragEnd = (id: number, _: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     if (info.offset.x < -100) setSwipedId(id);
     else if (info.offset.x > 100) { toggleTask(id); setSwipedId(null); }
     else setSwipedId(null);

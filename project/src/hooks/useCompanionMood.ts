@@ -49,7 +49,7 @@ async function fetchWeather(): Promise<WeatherInfo | null> {
       const { data, timestamp } = JSON.parse(cached);
       if (Date.now() - timestamp < WEATHER_CACHE_DURATION) return data;
     }
-  } catch {}
+  } catch { /* noop */ }
 
   try {
     // Get user location (or default to Mexico City)
@@ -60,7 +60,7 @@ async function fetchWeather(): Promise<WeatherInfo | null> {
       );
       lat = pos.coords.latitude;
       lon = pos.coords.longitude;
-    } catch {}
+    } catch { /* noop */ }
 
     const res = await fetch(
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`

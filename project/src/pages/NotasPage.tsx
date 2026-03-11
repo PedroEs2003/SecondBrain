@@ -86,20 +86,6 @@ const genId = () => Math.random().toString(36).slice(2, 9);
 const NotasPage = () => {
   const { notas, isLoading, crear, actualizar, eliminar } = useNotas();
 
-  if (isLoading) {
-    return (
-      <div className="px-4 pt-12 pb-24 space-y-4">
-        <Skeleton className="h-8 w-32" />
-        <Skeleton className="h-10 w-full rounded-xl" />
-        <div className="grid grid-cols-2 gap-3">
-          {[1, 2, 3, 4, 5, 6].map(i => (
-            <Skeleton key={i} className={`rounded-2xl ${i % 3 === 0 ? "h-36" : "h-28"}`} />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
   // Adaptar Nota (DB) → Note (UI)
   const notes: Note[] = useMemo(() => notas.map(n => {
     const cat = (n.etiquetas[0] ?? "personal") as NoteCategory;
@@ -158,6 +144,20 @@ const NotasPage = () => {
     return result;
   }, [notes, searchQuery, filterCategory, sortBy]);
 
+  if (isLoading) {
+    return (
+      <div className="px-4 pt-12 pb-24 space-y-4">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-10 w-full rounded-xl" />
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4, 5, 6].map(i => (
+            <Skeleton key={i} className={`rounded-2xl ${i % 3 === 0 ? "h-36" : "h-28"}`} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // ── Actions ──
   const addNote = () => {
     if (!newTitle.trim()) return;
@@ -213,7 +213,7 @@ const NotasPage = () => {
   };
 
   // ── Swipe ──
-  const handleDragEnd = (id: number, _: any, info: PanInfo) => {
+  const handleDragEnd = (id: number, _: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     if (info.offset.x < -80) setSwipedId(id);
     else if (info.offset.x > 80) { togglePin(id); setSwipedId(null); }
     else setSwipedId(null);

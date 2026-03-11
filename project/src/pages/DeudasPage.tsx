@@ -41,22 +41,6 @@ const fadeUp = {
 const DeudasPage = () => {
   const { deudas, isLoading, crear, actualizar, eliminar } = useDeudas();
 
-  if (isLoading) {
-    return (
-      <div className="px-4 pt-12 pb-24 space-y-4">
-        <Skeleton className="h-8 w-36" />
-        <Skeleton className="h-28 w-full rounded-2xl" />
-        <div className="flex gap-3">
-          <Skeleton className="h-16 flex-1 rounded-xl" />
-          <Skeleton className="h-16 flex-1 rounded-xl" />
-        </div>
-        {[1, 2, 3].map(i => (
-          <Skeleton key={i} className="h-20 w-full rounded-2xl" />
-        ))}
-      </div>
-    );
-  }
-
   // Adaptar Deuda (DB) → Debt (UI)
   const debts: Debt[] = useMemo(() => deudas.map(d => ({
     id: d.id!,
@@ -91,6 +75,23 @@ const DeudasPage = () => {
 
   const active = useMemo(() => debts.filter(d => !d.paid), [debts]);
   const paid = useMemo(() => debts.filter(d => d.paid), [debts]);
+
+  if (isLoading) {
+    return (
+      <div className="px-4 pt-12 pb-24 space-y-4">
+        <Skeleton className="h-8 w-36" />
+        <Skeleton className="h-28 w-full rounded-2xl" />
+        <div className="flex gap-3">
+          <Skeleton className="h-16 flex-1 rounded-xl" />
+          <Skeleton className="h-16 flex-1 rounded-xl" />
+        </div>
+        {[1, 2, 3].map(i => (
+          <Skeleton key={i} className="h-20 w-full rounded-2xl" />
+        ))}
+      </div>
+    );
+  }
+
   const totalDebo = active.filter(d => d.type === "debo").reduce((s, d) => s + d.amount - d.payments.reduce((ps, p) => ps + p.amount, 0), 0);
   const totalMeDeben = active.filter(d => d.type === "me_deben").reduce((s, d) => s + d.amount - d.payments.reduce((ps, p) => ps + p.amount, 0), 0);
   const balance = totalMeDeben - totalDebo;

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRutinas } from "@/hooks/useRutinas";
@@ -38,7 +38,7 @@ const DAY_NAMES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const DAY_NAMES_FULL = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const MONTH_NAMES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-const ICONS: Record<string, any> = {
+const ICONS: Record<string, React.FC<{ size?: number; className?: string; style?: React.CSSProperties }>> = {
   sun: Sun, moon: Moon, dumbbell: Dumbbell, droplets: Droplets, car: Car,
   book: BookOpen, coffee: Coffee, utensils: Utensils, briefcase: Briefcase,
   code: Code, pencil: Pencil, sparkles: Sparkles, clock: Clock,
@@ -115,25 +115,6 @@ const parseTime = (t: string) => {
 const AgendaPage = () => {
   const navigate = useNavigate();
   const { rutinas, isLoading, crearRutina, eliminarRutina, saltarRutina, agregarExcepcion } = useRutinas();
-
-  if (isLoading) {
-    return (
-      <div className="px-4 pt-12 pb-24 space-y-4">
-        <Skeleton className="h-8 w-36" />
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {["L","M","X","J","V","S","D"].map(d => (
-            <Skeleton key={d} className="h-10 w-10 rounded-xl flex-shrink-0" />
-          ))}
-        </div>
-        {[1, 2, 3, 4].map(i => (
-          <div key={i} className="flex gap-3 items-center">
-            <Skeleton className="h-10 w-14 rounded-lg" />
-            <Skeleton className="h-14 flex-1 rounded-2xl" />
-          </div>
-        ))}
-      </div>
-    );
-  }
 
   const [template, setTemplate] = useState<WeekTemplate>(() => {
     const saved = localStorage.getItem("agenda-template");
@@ -399,6 +380,25 @@ const AgendaPage = () => {
   const [formIcon, setFormIcon] = useState("clock");
   const [formColor, setFormColor] = useState("primary");
   const [formReminder, setFormReminder] = useState(0);
+
+  if (isLoading) {
+    return (
+      <div className="px-4 pt-12 pb-24 space-y-4">
+        <Skeleton className="h-8 w-36" />
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          {["L","M","X","J","V","S","D"].map(d => (
+            <Skeleton key={d} className="h-10 w-10 rounded-xl flex-shrink-0" />
+          ))}
+        </div>
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="flex gap-3 items-center">
+            <Skeleton className="h-10 w-14 rounded-lg" />
+            <Skeleton className="h-14 flex-1 rounded-2xl" />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   const openBlockEditor = (block: TimeBlock | null, target: "template" | "override") => {
     setEditTarget(target);
