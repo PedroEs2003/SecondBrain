@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useFirstVisit } from "@/hooks/useFirstVisit";
+import { useAuth } from "@/hooks/useAuth";
 import { useQuery } from '@tanstack/react-query';
 import { getPrioridadDelDia, getJarvisWidgetConfig, type PrioridadItem, type WidgetJarvisConfig } from '@/services/aiService';
 import { Skeleton } from "@/components/ui/skeleton";
@@ -188,6 +189,8 @@ const HomePage = () => {
   }, []);
   const renderAvatar = (size: number) => renderGlobalAvatar(size, undefined, avatarStyle);
 
+  const { session } = useAuth();
+
   // Hooks de datos reales
   const { tareas, tareasPendientes, porcentajeCompletado, actualizar: actualizarTarea, crear: crearTarea, isLoading: loadingTareas } = useTareas();
   const { totalDebo, totalMeDeben, balance, deudasActivas, isLoading: loadingDeudas } = useDeudas();
@@ -235,7 +238,7 @@ const HomePage = () => {
         rutinasHoy: rutinasDelDia,
         recordatorios: recordatoriosProximos.map(r => ({ texto: r.texto, fecha: r.fecha, activo: r.activo })),
       }),
-    enabled: !isLoading,
+    enabled: !isLoading && !!session,
     staleTime: 1000 * 60 * 60,
     gcTime: 1000 * 60 * 60 * 2,
   });
@@ -297,7 +300,7 @@ const HomePage = () => {
 
   // Fetch Gemini solo cuando: Jarvis activo + datos cargados + cache vencida/vacía
   useEffect(() => {
-    if (!jarvisMode || isLoading) return
+    if (!jarvisMode || isLoading || !session) return
     if (jarvisInitialized.current) return
 
     jarvisInitialized.current = true
