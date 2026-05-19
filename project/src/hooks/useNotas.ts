@@ -1,8 +1,8 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { parseSupabaseError } from '@/lib/supabaseError'
 import { notasService } from '@/services/supabaseService'
-import { supabase } from '@/integrations/supabase/client'
 import type { Nota } from '@/types'
 
 export const useNotas = () => {
@@ -11,6 +11,8 @@ export const useNotas = () => {
   const { data: notas = [], isLoading } = useQuery({
     queryKey: ['notas'],
     queryFn: notasService.getNotas,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   })
 
   const crear = useMutation({
@@ -19,14 +21,14 @@ export const useNotas = () => {
       queryClient.invalidateQueries({ queryKey: ['notas'] })
       toast.success('Nota creada')
     },
-    onError: () => toast.error('Error al crear nota'),
+    onError: (err) => toast.error(`Error al crear nota: ${parseSupabaseError(err)}`),
   })
 
   const actualizar = useMutation({
     mutationFn: ({ id, updates }: { id: number; updates: Partial<Nota> }) =>
       notasService.updateNota(id, updates),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notas'] }),
-    onError: () => toast.error('Error al actualizar nota'),
+    onError: (err) => toast.error(`Error al actualizar nota: ${parseSupabaseError(err)}`),
   })
 
   const eliminar = useMutation({
@@ -35,7 +37,7 @@ export const useNotas = () => {
       queryClient.invalidateQueries({ queryKey: ['notas'] })
       toast.success('Nota eliminada')
     },
-    onError: () => toast.error('Error al eliminar nota'),
+    onError: (err) => toast.error(`Error al eliminar nota: ${parseSupabaseError(err)}`),
   })
 
   const notasPinned = useMemo(() => notas.filter((n) => n.pinned), [notas])
@@ -50,16 +52,6 @@ export const useNotas = () => {
     })
     return map
   }, [notas])
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('notas-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notas' }, () => {
-        queryClient.invalidateQueries({ queryKey: ['notas'] })
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [queryClient])
 
   return { notas, notasPinned, porEtiqueta, isLoading, crear, actualizar, eliminar }
 }

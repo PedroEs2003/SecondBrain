@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { renderGlobalAvatar } from "@/lib/avatarHelper";
 import { useCompanionMood } from "@/hooks/useCompanionMood";
 import { useAI } from "@/hooks/useAI";
+import { supabase } from "@/integrations/supabase/client";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type Mode = "actions" | "consult";
@@ -13,9 +14,9 @@ const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/jarvis-chat`
 
 const SUGGESTIONS: Record<Mode, string[]> = {
   actions: [
-    "Crea una nota rápida",
-    "Agrega gym a mi agenda del lunes",
-    "Elimina la tarea de comprar chicles",
+    "Press banca 4x10 80kg",
+    "Marca como pagada la deuda de Juan",
+    "Completa la tarea de comprar leche",
   ],
   consult: [
     "¿Cómo mejorar mi rutina de gym?",
@@ -51,9 +52,13 @@ async function streamChat({
   messages: Msg[]; mode: Mode;
   onDelta: (text: string) => void; onDone: () => void; onError: (msg: string) => void;
 }) {
+  const { data: { session } } = await supabase.auth.getSession()
   const resp = await fetch(CHAT_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}),
+    },
     body: JSON.stringify({ messages, mode }),
   });
 
@@ -138,11 +143,19 @@ const FloatingCompanion = () => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showBurst, setShowBurst] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { mood, isTemporary } = useCompanionMood();
   const { procesarMensaje, procesando } = useAI();
   const prevMoodRef = useRef(mood);
+  const [avatarKey, setAvatarKey] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setAvatarKey(k => k + 1);
+    window.addEventListener("avatar-changed", handler);
+    return () => window.removeEventListener("avatar-changed", handler);
+  }, []);
 
   // Trigger particle burst when mood changes temporarily
   useEffect(() => {
@@ -162,6 +175,18 @@ const FloatingCompanion = () => {
   useEffect(() => {
     if (open && inputRef.current) setTimeout(() => inputRef.current?.focus(), 300);
   }, [open]);
+
+  useEffect(() => {
+    let count = 0;
+    const onOpen = () => { count++; setIsModalOpen(true); };
+    const onClose = () => { count = Math.max(0, count - 1); if (count === 0) setIsModalOpen(false); };
+    window.addEventListener('modal-open', onOpen);
+    window.addEventListener('modal-close', onClose);
+    return () => {
+      window.removeEventListener('modal-open', onOpen);
+      window.removeEventListener('modal-close', onClose);
+    };
+  }, []);
 
   const send = useCallback(async (text: string) => {
     if (!text.trim() || isLoading) return;
@@ -214,52 +239,43 @@ const FloatingCompanion = () => {
 
   return (
     <>
-      {/* FAB */}
-      <AnimatePresence>
-        {!open && (
-          <motion.button
-            initial={{ scale: 0 }}
-            animate={moodAnim ? {
-              scale: moodAnim.scale,
-              rotate: moodAnim.rotate,
-            } : { scale: 1 }}
-            exit={{ scale: 0 }}
-            transition={moodAnim ? {
-              duration: mood === "celebrating" ? 0.8 : 0.6,
-              repeat: isTemporary ? 2 : 0,
-              ease: "easeInOut",
-            } : undefined}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => setOpen(true)}
-            className="w-14 h-14 rounded-full overflow-hidden relative"
-            style={{
-              position: "fixed",
-              bottom: "6rem",
-              right: "1rem",
-              left: "auto",
-              zIndex: 50,
-              boxShadow: `0 0 24px ${glowColor}, 0 0 50px hsla(211, 100%, 50%, 0.12)`,
-              background: "radial-gradient(circle, hsla(225, 10%, 15%, 0.9), hsla(225, 10%, 8%, 0.95))",
-            }}
-          >
-            {renderGlobalAvatar(56, mood)}
+      {/* FAB — always mounted to keep Three.js Canvas alive */}
+      <motion.button
+        animate={!open && !isModalOpen
+          ? (moodAnim ? { scale: moodAnim.scale, rotate: moodAnim.rotate, opacity: 1 } : { scale: 1, opacity: 1 })
+          : { scale: 0, opacity: 0 }
+        }
+        transition={moodAnim && !open && !isModalOpen ? {
+          duration: mood === "celebrating" ? 0.8 : 0.6,
+          repeat: isTemporary ? 2 : 0,
+          ease: "easeInOut",
+        } : { duration: 0.2 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => setOpen(true)}
+        className="fixed right-4 z-50 w-14 h-14 rounded-full overflow-hidden"
+        style={{
+          bottom: 'calc(4rem + env(safe-area-inset-bottom, 0px) + 1rem)',
+          pointerEvents: !open && !isModalOpen ? 'auto' : 'none',
+          boxShadow: `0 0 24px ${glowColor}, 0 0 50px hsla(211, 100%, 50%, 0.12)`,
+          background: "radial-gradient(circle, hsla(225, 10%, 15%, 0.9), hsla(225, 10%, 8%, 0.95))",
+        }}
+      >
+        {renderGlobalAvatar(56, mood, undefined, avatarKey)}
 
-            {/* Pulse ring on temporary mood */}
-            {isTemporary && (
-              <motion.div
-                className="absolute inset-0 rounded-full border-2"
-                style={{ borderColor: glowColor }}
-                initial={{ scale: 1, opacity: 0.8 }}
-                animate={{ scale: 1.6, opacity: 0 }}
-                transition={{ duration: 1, repeat: 3, ease: "easeOut" }}
-              />
-            )}
-
-            {/* Particle burst */}
-            {showBurst && <ParticleBurst color={glowColor.replace(/[\d.]+\)$/, "1)")} />}
-          </motion.button>
+        {/* Pulse ring on temporary mood */}
+        {isTemporary && (
+          <motion.div
+            className="absolute inset-0 rounded-full border-2"
+            style={{ borderColor: glowColor }}
+            initial={{ scale: 1, opacity: 0.8 }}
+            animate={{ scale: 1.6, opacity: 0 }}
+            transition={{ duration: 1, repeat: 3, ease: "easeOut" }}
+          />
         )}
-      </AnimatePresence>
+
+        {/* Particle burst */}
+        {showBurst && <ParticleBurst color={glowColor.replace(/[\d.]+\)$/, "1)")} />}
+      </motion.button>
 
       {/* Chat panel */}
       <AnimatePresence>

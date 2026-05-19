@@ -1,8 +1,8 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { parseSupabaseError } from '@/lib/supabaseError'
 import { rutinasService } from '@/services/supabaseService'
-import { supabase } from '@/integrations/supabase/client'
 import type { RutinaDiaria, RutinaExcepcion } from '@/types'
 
 export const useRutinas = (fecha: Date = new Date()) => {
@@ -11,11 +11,17 @@ export const useRutinas = (fecha: Date = new Date()) => {
   const { data: rutinas = [], isLoading: loadingRutinas } = useQuery({
     queryKey: ['rutinas_diarias'],
     queryFn: rutinasService.getRutinasDiarias,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: () => [] as RutinaDiaria[],
   })
 
   const { data: excepciones = [], isLoading: loadingExcepciones } = useQuery({
     queryKey: ['rutinas_excepciones', fecha.toISOString().split('T')[0]],
     queryFn: () => rutinasService.getRutinasExcepciones(fecha),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: () => [] as RutinaExcepcion[],
   })
 
   // Día de semana: 1=Lunes … 7=Domingo (igual que Flutter)
@@ -54,14 +60,14 @@ export const useRutinas = (fecha: Date = new Date()) => {
       queryClient.invalidateQueries({ queryKey: ['rutinas_diarias'] })
       toast.success('Rutina creada')
     },
-    onError: () => toast.error('Error al crear rutina'),
+    onError: (err) => toast.error(`Error al crear rutina: ${parseSupabaseError(err)}`),
   })
 
   const actualizarRutina = useMutation({
     mutationFn: ({ id, updates }: { id: number; updates: Partial<RutinaDiaria> }) =>
       rutinasService.updateRutinaDiaria(id, updates),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rutinas_diarias'] }),
-    onError: () => toast.error('Error al actualizar rutina'),
+    onError: (err) => toast.error(`Error al actualizar rutina: ${parseSupabaseError(err)}`),
   })
 
   const eliminarRutina = useMutation({
@@ -70,14 +76,14 @@ export const useRutinas = (fecha: Date = new Date()) => {
       queryClient.invalidateQueries({ queryKey: ['rutinas_diarias'] })
       toast.success('Rutina eliminada')
     },
-    onError: () => toast.error('Error al eliminar rutina'),
+    onError: (err) => toast.error(`Error al eliminar rutina: ${parseSupabaseError(err)}`),
   })
 
   const saltarRutina = useMutation({
     mutationFn: (excepcion: Omit<RutinaExcepcion, 'id'>) =>
       rutinasService.createRutinaExcepcion(excepcion),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rutinas_excepciones'] }),
-    onError: () => toast.error('Error al saltar rutina'),
+    onError: (err) => toast.error(`Error al saltar rutina: ${parseSupabaseError(err)}`),
   })
 
   const agregarExcepcion = useMutation({
@@ -87,25 +93,14 @@ export const useRutinas = (fecha: Date = new Date()) => {
       queryClient.invalidateQueries({ queryKey: ['rutinas_excepciones'] })
       toast.success('Actividad extra agregada')
     },
-    onError: () => toast.error('Error al agregar excepción'),
+    onError: (err) => toast.error(`Error al agregar excepción: ${parseSupabaseError(err)}`),
   })
 
   const eliminarExcepcion = useMutation({
     mutationFn: rutinasService.deleteRutinaExcepcion,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rutinas_excepciones'] }),
-    onError: () => toast.error('Error al eliminar excepción'),
+    onError: (err) => toast.error(`Error al eliminar excepción: ${parseSupabaseError(err)}`),
   })
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('rutinas-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rutinas_diarias' }, () => {
-        queryClient.invalidateQueries({ queryKey: ['rutinas_diarias'] })
-        queryClient.invalidateQueries({ queryKey: ['rutinas_excepciones'] })
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [queryClient])
 
   const isLoading = loadingRutinas || loadingExcepciones
 

@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
-import { motion, AnimatePresence, PanInfo } from "framer-motion";
+import { useState, useMemo, useEffect } from "react";
+import { motion, AnimatePresence, PanInfo, useMotionValue, animate } from "framer-motion";
+import { useFirstVisit } from "@/hooks/useFirstVisit";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, TrendingDown, TrendingUp, Wallet, ArrowUpRight, ArrowDownLeft,
@@ -8,6 +9,7 @@ import {
 import AnimatedCounter from "@/components/AnimatedCounter";
 import { toast } from "@/hooks/use-toast";
 import { useDeudas } from "@/hooks/useDeudas";
+import { triggerMoodEvent } from "@/hooks/useCompanionMood";
 
 type DebtType = "debo" | "me_deben";
 
@@ -38,6 +40,34 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" as const } },
 };
 
+// Each card gets its own motion value → 1:1 movement with finger, spring snap-back
+const SwipeCard = ({ children, onSwipeLeft, onSwipeRight, className }: {
+  children: React.ReactNode;
+  onSwipeLeft: () => void;
+  onSwipeRight: () => void;
+  className?: string;
+}) => {
+  const x = useMotionValue(0);
+  const handleDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.x > 100) onSwipeRight();
+    else if (info.offset.x < -100) onSwipeLeft();
+    animate(x, 0, { type: "spring", stiffness: 500, damping: 38 });
+  };
+  return (
+    <motion.div
+      drag="x"
+      style={{ x }}
+      dragElastic={0}
+      dragMomentum={false}
+      onDragEnd={handleDragEnd}
+      whileTap={{ scale: 0.99 }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+};
+
 const DeudasPage = () => {
   const { deudas, isLoading, crear, actualizar, eliminar } = useDeudas();
 
@@ -47,7 +77,10 @@ const DeudasPage = () => {
     person: d.persona,
     amount: d.monto,
     date: d.fecha
-      ? new Date(d.fecha + "T00:00:00").toLocaleDateString("es-MX", { day: "numeric", month: "short" })
+      ? (() => {
+          const parsed = new Date(d.fecha!.includes("T") ? d.fecha! : d.fecha! + "T12:00:00");
+          return isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+        })()
       : "",
     concept: d.descripcion ?? "Sin concepto",
     type: d.tipo,
@@ -64,6 +97,10 @@ const DeudasPage = () => {
   const [showPayment, setShowPayment] = useState<number | null>(null);
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
 
+  useEffect(() => {
+    window.dispatchEvent(new Event(showAdd || showPayment !== null ? 'modal-open' : 'modal-close'))
+  }, [showAdd, showPayment])
+
   // Add form
   const [newPerson, setNewPerson] = useState("");
   const [newAmount, setNewAmount] = useState("");
@@ -75,6 +112,7 @@ const DeudasPage = () => {
 
   const active = useMemo(() => debts.filter(d => !d.paid), [debts]);
   const paid = useMemo(() => debts.filter(d => d.paid), [debts]);
+  const isFirst = useFirstVisit('deudas')
 
   if (isLoading) {
     return (
@@ -134,6 +172,7 @@ const DeudasPage = () => {
       pagada: false,
       payments: [],
     });
+    if (newType === "debo") triggerMoodEvent("triste", 5000);
     setNewPerson(""); setNewAmount(""); setNewConcept(""); setNewType("debo");
     setShowAdd(false);
   };
@@ -167,13 +206,13 @@ const DeudasPage = () => {
     eliminar.mutate(debtId);
   };
 
-  const handleSwipe = (debtId: number, info: PanInfo) => {
-    if (info.offset.x < -100) handleDelete(debtId);
-    if (info.offset.x > 100) handleMarkPaid(debtId);
+  const handleUnpay = (debtId: number) => {
+    actualizar.mutate({ id: debtId, updates: { pagada: false } });
   };
 
+
   return (
-    <motion.div variants={stagger} initial="hidden" animate="show" className="px-4 pt-14 pb-28">
+    <motion.div variants={stagger} initial={isFirst ? "hidden" : "show"} animate="show" className="px-4 pt-14 pb-28">
       {/* Header */}
       <motion.div variants={fadeUp} className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
@@ -209,7 +248,7 @@ const DeudasPage = () => {
               <div>
                 <p className="text-[10px] text-muted-foreground font-semibold tracking-wider uppercase">Yo debo</p>
                 <p className="text-lg font-extrabold text-destructive">
-                  $<AnimatedCounter target={totalDebo} />
+                  $<AnimatedCounter animated={isFirst} target={totalDebo} />
                 </p>
               </div>
             </div>
@@ -220,7 +259,7 @@ const DeudasPage = () => {
               <div>
                 <p className="text-[10px] text-muted-foreground font-semibold tracking-wider uppercase">Me deben</p>
                 <p className="text-lg font-extrabold text-success">
-                  $<AnimatedCounter target={totalMeDeben} />
+                  $<AnimatedCounter animated={isFirst} target={totalMeDeben} />
                 </p>
               </div>
             </div>
@@ -247,7 +286,7 @@ const DeudasPage = () => {
         <div className="border-t border-border/30 mt-4 pt-3 flex items-center justify-between relative z-10">
           <span className="text-sm text-muted-foreground">Balance neto</span>
           <span className={`text-xl font-extrabold ${balance >= 0 ? "text-success" : "text-destructive"}`}>
-            {balance >= 0 ? "+" : "-"}$<AnimatedCounter target={Math.abs(balance)} />
+            {balance >= 0 ? "+" : "-"}$<AnimatedCounter animated={isFirst} target={Math.abs(balance)} />
           </span>
         </div>
       </motion.div>
@@ -284,7 +323,12 @@ const DeudasPage = () => {
       {/* Swipe hint */}
       {tab === "activas" && active.length > 0 && (
         <motion.p variants={fadeUp} className="text-[10px] text-muted-foreground/60 text-center mb-3 font-medium">
-          ← Desliza para eliminar · Desliza para pagar →
+          ← Eliminar · Pagar →
+        </motion.p>
+      )}
+      {tab === "pagadas" && paid.length > 0 && (
+        <motion.p variants={fadeUp} className="text-[10px] text-muted-foreground/60 text-center mb-3 font-medium">
+          ← Eliminar · Reactivar →
         </motion.p>
       )}
 
@@ -352,14 +396,28 @@ const DeudasPage = () => {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <motion.div
-                          drag={tab === "activas" ? "x" : false}
-                          dragConstraints={{ left: 0, right: 0 }}
-                          dragElastic={0.3}
-                          onDragEnd={(_, info) => handleSwipe(d.id, info)}
-                          whileTap={{ scale: 0.98 }}
-                          className="glass-card-hover p-4 mb-2 ml-4 relative overflow-hidden cursor-grab active:cursor-grabbing"
-                        >
+                        {/* iOS-style swipe: background revealed under sliding card */}
+                        <div className="relative overflow-hidden rounded-2xl mb-2 ml-4">
+                          {/* Action backgrounds — always behind the card */}
+                          <div className="absolute inset-0 flex items-stretch">
+                            <div className="w-20 bg-success flex flex-col items-center justify-center gap-1 shrink-0">
+                              <Check size={18} className="text-white" />
+                              <span className="text-[10px] text-white font-bold">
+                                {tab === "pagadas" ? "Reactivar" : "Pagar"}
+                              </span>
+                            </div>
+                            <div className="flex-1" />
+                            <div className="w-20 bg-destructive flex flex-col items-center justify-center gap-1 shrink-0">
+                              <Trash2 size={18} className="text-white" />
+                              <span className="text-[10px] text-white font-bold">Eliminar</span>
+                            </div>
+                          </div>
+
+                          <SwipeCard
+                            onSwipeRight={() => tab === "pagadas" ? handleUnpay(d.id) : handleMarkPaid(d.id)}
+                            onSwipeLeft={() => handleDelete(d.id)}
+                            className="glass-card-hover p-4 relative cursor-grab active:cursor-grabbing"
+                          >
                           <div className={`absolute left-0 top-0 bottom-0 w-1 ${d.type === "debo" ? "gradient-destructive" : "gradient-success"}`} />
                           <div className="flex items-start justify-between pl-2">
                             <div className="flex-1">
@@ -430,7 +488,8 @@ const DeudasPage = () => {
                               )}
                             </div>
                           </div>
-                        </motion.div>
+                          </SwipeCard>
+                        </div>{/* end swipe wrapper */}
                       </motion.div>
                     );
                   })}

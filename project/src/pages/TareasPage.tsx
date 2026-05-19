@@ -1,7 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence, PanInfo } from "framer-motion";
+import { useFirstVisit } from "@/hooks/useFirstVisit";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTareas } from "@/hooks/useTareas";
+import { useRecordatorios } from "@/hooks/useRecordatorios";
 import {
   Plus, CheckCircle2, Circle, Target, Calendar, X,
   Bell, Clock, Repeat, Trash2, Flag, Tag, ChevronDown,
@@ -38,6 +40,7 @@ type Reminder = {
   id: number;
   text: string;
   date: string;
+  hora?: string;
   repeat: "none" | "monthly" | "yearly" | "weekly";
   active: boolean;
 };
@@ -69,10 +72,24 @@ const fadeUp = {
   hidden: { opacity: 0, y: 14 },
   show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } },
 };
+// Variants para los wrappers de tab — propagate "show" a hijos con variants={fadeUp}
+const tabLeft = {
+  hidden: { opacity: 0, x: -20 },
+  show: { opacity: 1, x: 0, transition: { duration: 0.25, staggerChildren: 0.04 } },
+};
+const tabRight = {
+  hidden: { opacity: 0, x: 20 },
+  show: { opacity: 1, x: 0, transition: { duration: 0.25, staggerChildren: 0.04 } },
+};
+
+const parseLocalDate = (d: string) => {
+  const [year, month, day] = d.slice(0, 10).split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
 
 const formatDate = (d: string) => {
   try {
-    const date = new Date(d);
+    const date = parseLocalDate(d);
     return date.toLocaleDateString("es-MX", { weekday: "short", day: "2-digit", month: "short" });
   } catch {
     return d;
@@ -81,7 +98,8 @@ const formatDate = (d: string) => {
 
 const isOverdue = (dueDate?: string) => {
   if (!dueDate) return false;
-  return new Date(dueDate) < new Date(new Date().toDateString());
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return parseLocalDate(dueDate) < today;
 };
 
 // Mapeo de prioridades UI ↔ DB
@@ -91,6 +109,7 @@ const numToPriority: Record<number, Priority> = { 0: "baja", 1: "media", 2: "alt
 // ── Component ──
 const TareasPage = () => {
   const { tareas, isLoading, crear, actualizar, eliminar } = useTareas();
+  const { recordatorios: rawRecordatorios, crear: crearRecordatorio, actualizar: actualizarRecordatorio, eliminar: eliminarRecordatorio } = useRecordatorios();
 
   // Adaptar Tarea (DB) → Task (UI)
   const tasks: Task[] = useMemo(() => tareas.map(t => ({
@@ -109,20 +128,29 @@ const TareasPage = () => {
   })), [tareas]);
 
   const [activeTab, setActiveTab] = useState<"tareas" | "recordatorios">("tareas");
-  const [reminders, setReminders] = useState<Reminder[]>([
-    { id: 1, text: "Pagar renta", date: "Día 1 de cada mes", repeat: "monthly", active: true },
-    { id: 2, text: "Renovar licencia", date: "10 de marzo 2026", repeat: "none", active: true },
-    { id: 3, text: "Pago tarjeta", date: "Día 15 de cada mes", repeat: "monthly", active: true },
-    { id: 4, text: "Aniversario", date: "22 de julio", repeat: "yearly", active: true },
-  ]);
+  const reminders: Reminder[] = useMemo(
+    () => rawRecordatorios.map(r => ({
+      id: r.id,
+      text: r.texto,
+      date: r.fecha,
+      hora: r.hora,
+      repeat: r.repetir as Reminder["repeat"],
+      active: r.activo,
+    })),
+    [rawRecordatorios]
+  );
 
   // UI state
   const [showAdd, setShowAdd] = useState(false);
   const [showAddReminder, setShowAddReminder] = useState(false);
   const [expandedTask, setExpandedTask] = useState<number | null>(null);
+
+  useEffect(() => {
+    window.dispatchEvent(new Event(showAdd || showAddReminder ? 'modal-open' : 'modal-close'))
+  }, [showAdd, showAddReminder])
   const [filterCategory, setFilterCategory] = useState<Category | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<"default" | "priority" | "date">("default");
+  const [sortBy, setSortBy] = useState<"default" | "sorted">("default");
   const [showSearch, setShowSearch] = useState(false);
   const [swipedId, setSwipedId] = useState<number | null>(null);
 
@@ -137,6 +165,7 @@ const TareasPage = () => {
   // New reminder form
   const [newReminder, setNewReminder] = useState("");
   const [newReminderDate, setNewReminderDate] = useState("");
+  const [newReminderHora, setNewReminderHora] = useState("");
   const [newReminderRepeat, setNewReminderRepeat] = useState<"none" | "monthly" | "yearly" | "weekly">("none");
 
   // ── Computed ──
@@ -147,14 +176,14 @@ const TareasPage = () => {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(t => t.text.toLowerCase().includes(q) || t.subtasks.some(s => s.text.toLowerCase().includes(q)));
     }
-    if (sortBy === "priority") {
+    if (sortBy === "sorted") {
       const order: Record<Priority, number> = { alta: 0, media: 1, baja: 2 };
-      filtered = [...filtered].sort((a, b) => order[a.priority] - order[b.priority]);
-    } else if (sortBy === "date") {
       filtered = [...filtered].sort((a, b) => {
+        const byPriority = order[a.priority] - order[b.priority];
+        if (byPriority !== 0) return byPriority;
         if (!a.dueDate) return 1;
         if (!b.dueDate) return -1;
-        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+        return parseLocalDate(a.dueDate).getTime() - parseLocalDate(b.dueDate).getTime();
       });
     }
     return filtered;
@@ -167,6 +196,7 @@ const TareasPage = () => {
   }, [tasks, searchQuery]);
   const progress = tasks.length ? Math.round((completed.length / tasks.length) * 100) : 0;
   const overdueCount = useMemo(() => pending.filter(t => isOverdue(t.dueDate)).length, [pending]);
+  const isFirst = useFirstVisit('tareas')
 
   if (isLoading) {
     return (
@@ -238,15 +268,22 @@ const TareasPage = () => {
 
   const addReminder = () => {
     if (!newReminder.trim()) return;
-    setReminders(prev => [...prev, {
-      id: Date.now(), text: newReminder, date: newReminderDate || "Sin fecha",
-      repeat: newReminderRepeat, active: true,
-    }]);
-    setNewReminder(""); setNewReminderDate(""); setNewReminderRepeat("none"); setShowAddReminder(false);
+    crearRecordatorio.mutate({
+      texto: newReminder.trim(),
+      fecha: newReminderDate || new Date().toISOString().split('T')[0],
+      hora: newReminderHora || undefined,
+      repetir: newReminderRepeat,
+      activo: true,
+    });
+    setNewReminder(""); setNewReminderDate(""); setNewReminderHora(""); setNewReminderRepeat("none"); setShowAddReminder(false);
   };
 
-  const deleteReminder = (id: number) => setReminders(prev => prev.filter(r => r.id !== id));
-  const toggleReminder = (id: number) => setReminders(prev => prev.map(r => r.id === id ? { ...r, active: !r.active } : r));
+  const deleteReminder = (id: number) => eliminarRecordatorio.mutate(id);
+  const toggleReminder = (id: number) => {
+    const current = rawRecordatorios.find(r => r.id === id);
+    if (!current) return;
+    actualizarRecordatorio.mutate({ id, updates: { activo: !current.activo } });
+  };
 
   // ── Swipe ──
   const handleDragEnd = (id: number, _: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
@@ -256,7 +293,7 @@ const TareasPage = () => {
   };
 
   return (
-    <motion.div variants={stagger} initial="hidden" animate="show" className="px-4 pt-12 pb-24">
+    <motion.div variants={stagger} initial={isFirst ? "hidden" : "show"} animate="show" className="px-4 pt-12 pb-24">
       {/* Header */}
       <motion.div variants={fadeUp} className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
@@ -274,11 +311,11 @@ const TareasPage = () => {
         <div className="flex gap-2">
           <motion.button
             whileTap={{ scale: 0.9 }}
-            onClick={() => setSortBy(s => s === "default" ? "priority" : s === "priority" ? "date" : "default")}
+            onClick={() => setSortBy(s => s === "default" ? "sorted" : "default")}
             className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-colors ${
               sortBy !== "default" ? "gradient-primary" : "bg-secondary/80"
             }`}
-            title={sortBy === "default" ? "Ordenar" : sortBy === "priority" ? "Por prioridad" : "Por fecha"}
+            title={sortBy === "default" ? "Ordenar por prioridad y fecha" : "Quitar orden"}
           >
             <ArrowUpDown size={18} className={sortBy !== "default" ? "text-primary-foreground" : "text-foreground"} />
           </motion.button>
@@ -324,10 +361,10 @@ const TareasPage = () => {
         {activeTab === "tareas" ? (
           <motion.div
             key="tareas"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            transition={{ duration: 0.25 }}
+            variants={tabLeft}
+            initial="hidden"
+            animate="show"
+            exit={{ opacity: 0, x: 20, transition: { duration: 0.25 } }}
           >
             {/* Stats Card */}
             <motion.div variants={fadeUp} className="glass-card p-5 mb-4 flex items-center gap-5 noise-overlay">
@@ -338,7 +375,7 @@ const TareasPage = () => {
                   </div>
                   <div>
                     <p className="text-[10px] text-muted-foreground font-semibold tracking-wider uppercase">Pendientes</p>
-                    <p className="text-xl font-extrabold"><AnimatedCounter target={pending.length} duration={0.6} /></p>
+                    <p className="text-xl font-extrabold"><AnimatedCounter animated={isFirst} target={pending.length} duration={0.6} /></p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -347,11 +384,11 @@ const TareasPage = () => {
                   </div>
                   <div>
                     <p className="text-[10px] text-muted-foreground font-semibold tracking-wider uppercase">Completadas</p>
-                    <p className="text-xl font-extrabold"><AnimatedCounter target={completed.length} duration={0.6} /></p>
+                    <p className="text-xl font-extrabold"><AnimatedCounter animated={isFirst} target={completed.length} duration={0.6} /></p>
                   </div>
                 </div>
               </div>
-              <CircularProgress progress={progress} size={96} strokeWidth={6} color="hsl(var(--primary))">
+              <CircularProgress animated={isFirst} progress={progress} size={96} strokeWidth={6} color="hsl(var(--primary))">
                 <div className="text-center">
                   <span className="text-xl font-black">{progress}%</span>
                   <p className="text-[8px] text-muted-foreground font-semibold">completado</p>
@@ -654,10 +691,10 @@ const TareasPage = () => {
         ) : (
           <motion.div
             key="recordatorios"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.25 }}
+            variants={tabRight}
+            initial="hidden"
+            animate="show"
+            exit={{ opacity: 0, x: -20, transition: { duration: 0.25 } }}
           >
             {/* Reminders summary */}
             <motion.div variants={fadeUp} className="glass-card p-4 mb-4 flex items-center gap-4 noise-overlay">
@@ -666,7 +703,7 @@ const TareasPage = () => {
               </div>
               <div>
                 <p className="text-lg font-extrabold">
-                  <AnimatedCounter target={reminders.filter(r => r.active).length} duration={0.6} /> activos
+                  <AnimatedCounter animated={isFirst} target={reminders.filter(r => r.active).length} duration={0.6} /> activos
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {reminders.filter(r => r.repeat !== "none").length} recurrentes · {reminders.filter(r => r.repeat === "none").length} únicos
@@ -714,7 +751,7 @@ const TareasPage = () => {
                       <p className="font-bold text-[15px]">{reminder.text}</p>
                       <div className="flex items-center gap-2 mt-0.5">
                         <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock size={10} /> {reminder.date}
+                          <Clock size={10} /> {formatDate(reminder.date)}{reminder.hora ? ` · ${reminder.hora}` : ""}
                         </p>
                         {reminder.repeat !== "none" && (
                           <span className="stat-badge bg-warning/10 text-warning text-[9px] py-0.5 px-1.5">
@@ -901,11 +938,23 @@ const TareasPage = () => {
                 className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-foreground placeholder:text-muted-foreground mb-3 outline-none focus:ring-2 focus:ring-primary transition-all text-[15px]"
                 autoFocus
               />
+              <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase mb-2">
+                <Calendar size={10} className="inline mr-1" /> Fecha
+              </p>
               <input
+                type="date"
                 value={newReminderDate}
                 onChange={e => setNewReminderDate(e.target.value)}
-                placeholder="Fecha (ej: Día 15 de cada mes)"
-                className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-foreground placeholder:text-muted-foreground mb-4 outline-none focus:ring-2 focus:ring-primary transition-all text-[15px]"
+                className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-foreground mb-4 outline-none focus:ring-2 focus:ring-primary transition-all text-[15px]"
+              />
+              <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase mb-2">
+                <Clock size={10} className="inline mr-1" /> Hora (opcional)
+              </p>
+              <input
+                type="time"
+                value={newReminderHora}
+                onChange={e => setNewReminderHora(e.target.value)}
+                className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-foreground mb-4 outline-none focus:ring-2 focus:ring-primary transition-all text-[15px]"
               />
 
               <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase mb-2">

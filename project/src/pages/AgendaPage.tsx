@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { motion, AnimatePresence, Reorder } from "framer-motion";
+import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRutinas } from "@/hooks/useRutinas";
 import {
@@ -9,7 +9,6 @@ import {
   Bell, BellOff, GripVertical, CalendarDays
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Drawer, DrawerContent } from "@/components/ui/drawer";
 import { toast } from "@/hooks/use-toast";
 
 // ─── Types ───
@@ -29,6 +28,7 @@ type DayOverride = {
   added: TimeBlock[];
   removed: string[];
   modified: TimeBlock[];
+  order?: string[]; // explicit drag order (block IDs)
 };
 
 type Overrides = Record<string, DayOverride>;
@@ -111,10 +111,92 @@ const parseTime = (t: string) => {
   return h * 60 + m;
 };
 
+// ─── Draggable block item (handle-only drag) ───
+const ReorderBlock = ({
+  block,
+  isFromTemplate,
+  isModified,
+  colorBg,
+  renderIcon,
+  openBlockEditor,
+  removeBlock,
+  setEditTarget,
+}: {
+  block: TimeBlock;
+  isFromTemplate: boolean;
+  isModified: boolean;
+  colorBg: (color: string, alpha?: number) => string;
+  renderIcon: (icon: string, size: number, className: string, color: string) => React.ReactNode;
+  openBlockEditor: (block: TimeBlock, target: string) => void;
+  removeBlock: (id: string) => void;
+  setEditTarget: (t: "template" | "override") => void;
+}) => {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      key={block.id}
+      value={block}
+      dragControls={controls}
+      dragListener={false}
+      className="flex gap-3 items-start relative"
+    >
+      {/* Timeline dot */}
+      <div className="relative z-10 mt-4">
+        <div className="w-[10px] h-[10px] rounded-full ring-4 ring-background" style={{ backgroundColor: colorBg(block.color) }} />
+      </div>
+
+      {/* Block card */}
+      <motion.div
+        whileTap={{ scale: 0.97 }}
+        className="glass-card-hover flex-1 p-4 relative overflow-hidden text-left"
+      >
+        {/* Drag handle — left color bar area */}
+        <div
+          className="absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center cursor-grab active:cursor-grabbing touch-none z-10"
+          onPointerDown={(e) => controls.start(e)}
+        >
+          <div className="absolute left-0 top-0 bottom-0 w-1 rounded-full" style={{ backgroundColor: colorBg(block.color) }} />
+          <GripVertical size={12} className="text-muted-foreground/40 ml-2" />
+        </div>
+
+        <div className="flex items-center gap-3 pl-5">
+          <div className="icon-container" style={{ backgroundColor: colorBg(block.color, 0.15) }}>
+            {renderIcon(block.icon, 20, "", block.color)}
+          </div>
+          <div className="flex-1 min-w-0" onClick={() => openBlockEditor(block, "override")}>
+            <div className="flex items-center gap-2">
+              <p className="text-[15px] font-bold truncate">{block.name}</p>
+              {!isFromTemplate && (
+                <span className="stat-badge bg-primary/15 text-primary text-[9px] py-0.5">Extra</span>
+              )}
+              {isModified && (
+                <span className="stat-badge bg-warning/15 text-warning text-[9px] py-0.5">Editado</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-muted-foreground font-medium">{block.startTime.slice(0,5)} - {block.endTime.slice(0,5)}</p>
+              {block.reminder && block.reminder > 0 && (
+                <Bell size={10} className="text-primary" />
+              )}
+            </div>
+          </div>
+          <motion.button
+            whileTap={{ scale: 0.8 }}
+            onClick={(e) => { e.stopPropagation(); setEditTarget("override"); removeBlock(block.id); }}
+            className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"
+          >
+            <X size={14} className="text-destructive/70" />
+          </motion.button>
+        </div>
+      </motion.div>
+    </Reorder.Item>
+  );
+};
+
 // ─── Component ───
 const AgendaPage = () => {
   const navigate = useNavigate();
-  const { rutinas, isLoading, crearRutina, eliminarRutina, saltarRutina, agregarExcepcion } = useRutinas();
+  const { rutinas, isLoading, crearRutina, eliminarRutina, saltarRutina, agregarExcepcion, actualizarRutina } = useRutinas();
 
   const [template, setTemplate] = useState<WeekTemplate>(() => {
     const saved = localStorage.getItem("agenda-template");
@@ -125,7 +207,9 @@ const AgendaPage = () => {
   useEffect(() => {
     if (rutinas.length === 0) return;
     const saved = localStorage.getItem("agenda-template");
-    if (saved && JSON.parse(saved) !== DEFAULT_TEMPLATE) return; // Ya hay datos locales
+    const parsedSaved = saved ? JSON.parse(saved) : null
+    const hasLocalBlocks = parsedSaved && Object.values(parsedSaved as WeekTemplate).some((day: TimeBlock[]) => day.length > 0)
+    if (hasLocalBlocks) return // Ya hay datos locales
 
     const newTemplate: WeekTemplate = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
     rutinas.forEach(r => {
@@ -136,10 +220,11 @@ const AgendaPage = () => {
         newTemplate[jsDow].push({
           id: String(r.id ?? genId()),
           name: r.actividad,
-          startTime: r.hora_inicio,
-          endTime: r.hora_fin,
+          startTime: r.hora_inicio?.slice(0, 5) ?? "",
+          endTime: r.hora_fin?.slice(0, 5) ?? "",
           icon: Object.keys(ICONS).find(k => r.icono?.includes(k)) ?? "clock",
           color: r.color ?? "primary",
+          reminder: r.minutos_antes ?? 0,
         });
       });
     });
@@ -160,6 +245,10 @@ const AgendaPage = () => {
   const [editTarget, setEditTarget] = useState<"template" | "override">("template");
   const [showMonthCalendar, setShowMonthCalendar] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+
+  useEffect(() => {
+    window.dispatchEvent(new Event(blockDrawerOpen ? 'modal-open' : 'modal-close'))
+  }, [blockDrawerOpen])
 
   // Persist
   useEffect(() => { localStorage.setItem("agenda-template", JSON.stringify(template)); }, [template]);
@@ -220,7 +309,12 @@ const AgendaPage = () => {
       .filter(b => !override.removed.includes(b.id))
       .map(b => { const mod = override.modified.find(m => m.id === b.id); return mod || b; });
     blocks = [...blocks, ...override.added];
-    blocks.sort((a, b) => parseTime(a.startTime) - parseTime(b.startTime));
+    // Apply explicit drag order if present
+    if (override.order?.length) {
+      blocks = override.order
+        .map(id => blocks.find(b => b.id === id))
+        .filter(Boolean) as TimeBlock[];
+    }
     return blocks;
   }, [template, overrides, selectedDayOfWeek, dateKey]);
 
@@ -304,9 +398,14 @@ const AgendaPage = () => {
         }
       });
     }
+    // Sync minutos_antes back to Supabase if this block corresponds to a Supabase rutina
+    const numericId = Number(block.id)
+    if (!isNaN(numericId) && numericId > 0) {
+      actualizarRutina.mutate({ id: numericId, updates: { minutos_antes: block.reminder ?? 0 } })
+    }
     setBlockDrawerOpen(false);
     setEditingBlock(null);
-  }, [editTarget, editingDay, selectedDayOfWeek, dateKey, template]);
+  }, [editTarget, editingDay, selectedDayOfWeek, dateKey, template, actualizarRutina]);
 
   const removeBlock = useCallback((blockId: string) => {
     if (editTarget === "template") {
@@ -336,41 +435,45 @@ const AgendaPage = () => {
     });
   };
 
-  // Drag reorder for day view
+  // Drag reorder for day view — mantiene duraciones, reasigna tiempos en cascada
   const handleReorder = (newOrder: TimeBlock[]) => {
-    // Update the order in override/template
-    if (hasOverride || editTarget === "override") {
-      setOverrides(prev => {
-        const existing = prev[dateKey] || { added: [], removed: [], modified: [] };
-        // Re-assign start times based on new order, keeping durations
-        const reordered = newOrder.map((block, i) => {
-          if (i === 0) return block;
-          const prevBlock = newOrder[i - 1];
-          const prevEnd = parseTime(prevBlock.endTime);
-          const duration = parseTime(block.endTime) - parseTime(block.startTime);
-          const newStart = prevEnd + 15; // 15 min gap
-          const startH = Math.floor(newStart / 60).toString().padStart(2, '0');
-          const startM = (newStart % 60).toString().padStart(2, '0');
-          const endMin = newStart + duration;
-          const endH = Math.floor(endMin / 60).toString().padStart(2, '0');
-          const endM = (endMin % 60).toString().padStart(2, '0');
-          return { ...block, startTime: `${startH}:${startM}`, endTime: `${endH}:${endM}` };
-        });
-
-        const templateBlockIds = (template[selectedDayOfWeek] || []).map(b => b.id);
-        const modified = reordered.filter(b => templateBlockIds.includes(b.id));
-        const added = reordered.filter(b => !templateBlockIds.includes(b.id));
-
-        return {
-          ...prev,
-          [dateKey]: {
-            ...existing,
-            modified: [...existing.modified.filter(m => !modified.some(rm => rm.id === m.id)), ...modified],
-            added: [...existing.added.filter(a => !added.some(ra => ra.id === a.id)), ...added],
-          }
-        };
-      });
+    // Construir secuencialmente para que cada bloque use el endTime real del anterior
+    const reordered: TimeBlock[] = [];
+    for (let i = 0; i < newOrder.length; i++) {
+      const block = newOrder[i];
+      if (i === 0) {
+        reordered.push(block);
+      } else {
+        const prev = reordered[i - 1];
+        const prevEnd = parseTime(prev.endTime);
+        const duration = Math.max(parseTime(block.endTime) - parseTime(block.startTime), 15);
+        const newStart = prevEnd + 15;
+        const startH = Math.floor(newStart / 60).toString().padStart(2, '0');
+        const startM = (newStart % 60).toString().padStart(2, '0');
+        const endMin = newStart + duration;
+        const endH = Math.floor(endMin / 60).toString().padStart(2, '0');
+        const endM = (endMin % 60).toString().padStart(2, '0');
+        reordered.push({ ...block, startTime: `${startH}:${startM}`, endTime: `${endH}:${endM}` });
+      }
     }
+
+    const order = reordered.map(b => b.id);
+    const templateBlockIds = (template[selectedDayOfWeek] || []).map(b => b.id);
+    const modified = reordered.filter(b => templateBlockIds.includes(b.id));
+    const added = reordered.filter(b => !templateBlockIds.includes(b.id));
+
+    setOverrides(prev => {
+      const existing = prev[dateKey] || { added: [], removed: [], modified: [] };
+      return {
+        ...prev,
+        [dateKey]: {
+          ...existing,
+          order,
+          modified: [...existing.modified.filter(m => !modified.some(rm => rm.id === m.id)), ...modified],
+          added: [...existing.added.filter(a => !added.some(ra => ra.id === a.id)), ...added],
+        }
+      };
+    });
   };
 
   // Block editor form state
@@ -446,7 +549,7 @@ const AgendaPage = () => {
   return (
     <div className="min-h-screen pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-30 glass px-4 py-3 safe-top">
+      <div className="sticky top-0 z-30 glass px-4 pb-3" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}>
         <div className="flex items-center gap-3">
           <motion.button whileTap={{ scale: 0.85 }} onClick={() => navigate("/")} className="w-10 h-10 rounded-xl bg-secondary/60 flex items-center justify-center">
             <ChevronLeft size={20} className="text-muted-foreground" />
@@ -629,7 +732,7 @@ const AgendaPage = () => {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-bold truncate">{block.name}</p>
-                              <p className="text-[11px] text-muted-foreground">{block.startTime} - {block.endTime}</p>
+                              <p className="text-[11px] text-muted-foreground">{block.startTime.slice(0,5)} - {block.endTime.slice(0,5)}</p>
                             </div>
                             <div className="flex gap-1">
                               <motion.button whileTap={{ scale: 0.85 }} onClick={() => openBlockEditor(block, "template")}
@@ -759,59 +862,21 @@ const AgendaPage = () => {
                 onReorder={handleReorder}
                 className="space-y-2"
               >
-                {resolvedBlocks.map((block, i) => {
+                {resolvedBlocks.map((block) => {
                   const isFromTemplate = (template[selectedDayOfWeek] || []).some(b => b.id === block.id);
                   const isModified = hasOverride && overrides[dateKey]?.modified?.some(m => m.id === block.id);
-
                   return (
-                    <Reorder.Item
+                    <ReorderBlock
                       key={block.id}
-                      value={block}
-                      className="flex gap-3 items-start relative cursor-grab active:cursor-grabbing"
-                    >
-                      {/* Timeline dot */}
-                      <div className="relative z-10 mt-4">
-                        <div className="w-[10px] h-[10px] rounded-full ring-4 ring-background" style={{ backgroundColor: colorBg(block.color) }} />
-                      </div>
-
-                      {/* Block card */}
-                      <motion.div
-                        whileTap={{ scale: 0.97 }}
-                        className="glass-card-hover flex-1 p-4 relative overflow-hidden text-left"
-                      >
-                        <div className="absolute left-0 top-0 bottom-0 w-1 rounded-full" style={{ backgroundColor: colorBg(block.color) }} />
-                        <div className="flex items-center gap-3">
-                          <GripVertical size={14} className="text-muted-foreground/30 shrink-0 -ml-1" />
-                          <div className="icon-container" style={{ backgroundColor: colorBg(block.color, 0.15) }}>
-                            {renderIcon(block.icon, 20, "", block.color)}
-                          </div>
-                          <div className="flex-1 min-w-0" onClick={() => openBlockEditor(block, "override")}>
-                            <div className="flex items-center gap-2">
-                              <p className="text-[15px] font-bold truncate">{block.name}</p>
-                              {!isFromTemplate && (
-                                <span className="stat-badge bg-primary/15 text-primary text-[9px] py-0.5">Extra</span>
-                              )}
-                              {isModified && (
-                                <span className="stat-badge bg-warning/15 text-warning text-[9px] py-0.5">Editado</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm text-muted-foreground font-medium">{block.startTime} - {block.endTime}</p>
-                              {block.reminder && block.reminder > 0 && (
-                                <Bell size={10} className="text-primary" />
-                              )}
-                            </div>
-                          </div>
-                          <motion.button
-                            whileTap={{ scale: 0.8 }}
-                            onClick={(e) => { e.stopPropagation(); setEditTarget("override"); removeBlock(block.id); }}
-                            className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"
-                          >
-                            <X size={14} className="text-destructive/70" />
-                          </motion.button>
-                        </div>
-                      </motion.div>
-                    </Reorder.Item>
+                      block={block}
+                      isFromTemplate={isFromTemplate}
+                      isModified={isModified}
+                      colorBg={colorBg}
+                      renderIcon={renderIcon}
+                      openBlockEditor={openBlockEditor}
+                      removeBlock={removeBlock}
+                      setEditTarget={setEditTarget}
+                    />
                   );
                 })}
               </Reorder.Group>
@@ -824,135 +889,151 @@ const AgendaPage = () => {
         </div>
       </div>
 
-      {/* Block Editor Drawer */}
-      <Drawer open={blockDrawerOpen} onOpenChange={setBlockDrawerOpen}>
-        <DrawerContent className="px-4 pb-8 max-h-[85vh] overflow-y-auto">
-          <div className="sheet-handle" />
-          <h3 className="text-lg font-extrabold mb-4">
-            {editingBlock ? "Editar bloque" : "Nuevo bloque"}
-          </h3>
-
-          <div className="space-y-4">
-            {/* Name */}
-            <div>
-              <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Nombre</label>
-              <input
-                value={formName}
-                onChange={e => setFormName(e.target.value)}
-                placeholder="Ej: Gym, Estudiar, Comer..."
-                className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-sm font-medium placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-            </div>
-
-            {/* Times */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Inicio</label>
-                <input
-                  type="time"
-                  value={formStart}
-                  onChange={e => setFormStart(e.target.value)}
-                  className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Fin</label>
-                <input
-                  type="time"
-                  value={formEnd}
-                  onChange={e => setFormEnd(e.target.value)}
-                  className="w-full bg-secondary/50 border border-border rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-              </div>
-            </div>
-
-            {/* Reminder */}
-            <div>
-              <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block flex items-center gap-1.5">
-                <Bell size={12} /> Recordatorio
-              </label>
-              <div className="flex gap-2 flex-wrap">
-                {REMINDER_OPTIONS.map(opt => (
-                  <motion.button
-                    key={opt.value}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setFormReminder(opt.value)}
-                    className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                      formReminder === opt.value
-                        ? "gradient-primary text-primary-foreground"
-                        : "bg-secondary/50 text-muted-foreground"
-                    }`}
-                    style={formReminder === opt.value ? { boxShadow: "var(--shadow-glow-blue)" } : {}}
-                  >
-                    {opt.value === 0 ? <BellOff size={11} /> : <Bell size={11} />}
-                    {opt.label}
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-
-            {/* Icon */}
-            <div>
-              <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Ícono</label>
-              <div className="flex flex-wrap gap-2">
-                {ICON_OPTIONS.map(ico => (
-                  <motion.button
-                    key={ico}
-                    whileTap={{ scale: 0.85 }}
-                    onClick={() => setFormIcon(ico)}
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                      formIcon === ico ? "gradient-primary" : "bg-secondary/50"
-                    }`}
-                    style={formIcon === ico ? { boxShadow: "var(--shadow-glow-blue)" } : {}}
-                  >
-                    {renderIcon(ico, 18, formIcon === ico ? "text-primary-foreground" : "text-muted-foreground")}
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-
-            {/* Color */}
-            <div>
-              <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Color</label>
-              <div className="grid grid-cols-7 gap-2">
-                {COLORS.map(c => {
-                  const selected = formColor === c.token;
-                  return (
-                    <motion.button
-                      key={c.token}
-                      whileTap={{ scale: 0.85 }}
-                      onClick={() => setFormColor(c.token)}
-                      className="flex flex-col items-center gap-1"
-                    >
-                      <div
-                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${selected ? "ring-2 ring-offset-2 ring-offset-background" : ""}`}
-                        style={{
-                          backgroundColor: colorBg(c.token),
-                          ...(selected ? { boxShadow: `0 0 12px ${colorBg(c.token, 0.5)}`, ringColor: colorBg(c.token) } : {}),
-                        }}
-                      >
-                        {selected && <Check size={14} className="text-foreground" />}
-                      </div>
-                      <span className="text-[9px] text-muted-foreground font-medium">{c.name}</span>
-                    </motion.button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Save */}
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={handleSaveForm}
-              disabled={!formName.trim()}
-              className="w-full gradient-primary text-primary-foreground py-3.5 rounded-2xl font-bold text-sm disabled:opacity-40"
-              style={{ boxShadow: "var(--shadow-glow-blue)" }}
+      {/* Block Editor Sheet */}
+      <AnimatePresence>
+        {blockDrawerOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end"
+            onClick={() => setBlockDrawerOpen(false)}
+          >
+            <div className="absolute inset-0" style={{ background: 'hsla(228, 12%, 6%, 0.7)', backdropFilter: 'blur(8px)' }} />
+            <motion.div
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="bottom-sheet w-full max-w-lg mx-auto p-6 max-h-[85vh] overflow-y-auto"
+              onClick={e => e.stopPropagation()}
             >
-              {editingBlock ? "Guardar cambios" : "Agregar bloque"}
-            </motion.button>
-          </div>
-        </DrawerContent>
-      </Drawer>
+              <div className="sheet-handle" />
+              <div className="flex items-center justify-between mb-5 mt-2">
+                <h3 className="text-xl font-extrabold">
+                  {editingBlock ? "Editar bloque" : "Nuevo bloque"}
+                </h3>
+                <motion.button whileTap={{ scale: 0.85 }} onClick={() => setBlockDrawerOpen(false)} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+                  <X size={16} />
+                </motion.button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Name */}
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Nombre</label>
+                  <input
+                    value={formName}
+                    onChange={e => setFormName(e.target.value)}
+                    placeholder="Ej: Gym, Estudiar, Comer..."
+                    className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-sm font-medium placeholder:text-muted-foreground/50 outline-none focus:ring-2 focus:ring-primary transition-all"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Times */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Inicio</label>
+                    <input
+                      type="time"
+                      value={formStart}
+                      onChange={e => setFormStart(e.target.value)}
+                      className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-sm font-medium outline-none focus:ring-2 focus:ring-primary transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Fin</label>
+                    <input
+                      type="time"
+                      value={formEnd}
+                      onChange={e => setFormEnd(e.target.value)}
+                      className="w-full bg-secondary/60 rounded-2xl px-4 py-3.5 text-sm font-medium outline-none focus:ring-2 focus:ring-primary transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Reminder */}
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block flex items-center gap-1.5">
+                    <Bell size={12} /> Recordatorio
+                  </label>
+                  <div className="flex gap-2 flex-wrap">
+                    {REMINDER_OPTIONS.map(opt => (
+                      <motion.button
+                        key={opt.value}
+                        whileTap={{ scale: 0.9 }}
+                        onClick={() => setFormReminder(opt.value)}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                          formReminder === opt.value ? "gradient-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground"
+                        }`}
+                        style={formReminder === opt.value ? { boxShadow: "var(--shadow-glow-blue)" } : {}}
+                      >
+                        {opt.value === 0 ? <BellOff size={11} /> : <Bell size={11} />}
+                        {opt.label}
+                      </motion.button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Icon */}
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Ícono</label>
+                  <div className="flex flex-wrap gap-2">
+                    {ICON_OPTIONS.map(ico => (
+                      <motion.button
+                        key={ico}
+                        whileTap={{ scale: 0.85 }}
+                        onClick={() => setFormIcon(ico)}
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                          formIcon === ico ? "gradient-primary" : "bg-secondary/60"
+                        }`}
+                        style={formIcon === ico ? { boxShadow: "var(--shadow-glow-blue)" } : {}}
+                      >
+                        {renderIcon(ico, 18, formIcon === ico ? "text-primary-foreground" : "text-muted-foreground")}
+                      </motion.button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Color */}
+                <div>
+                  <label className="text-xs font-bold text-muted-foreground tracking-wider uppercase mb-1.5 block">Color</label>
+                  <div className="grid grid-cols-7 gap-2">
+                    {COLORS.map(c => {
+                      const selected = formColor === c.token;
+                      return (
+                        <motion.button
+                          key={c.token}
+                          whileTap={{ scale: 0.85 }}
+                          onClick={() => setFormColor(c.token)}
+                          className="flex flex-col items-center gap-1"
+                        >
+                          <div
+                            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${selected ? "ring-2 ring-offset-2 ring-offset-background" : ""}`}
+                            style={{ backgroundColor: colorBg(c.token), ...(selected ? { boxShadow: `0 0 12px ${colorBg(c.token, 0.5)}` } : {}) }}
+                          >
+                            {selected && <Check size={14} className="text-foreground" />}
+                          </div>
+                          <span className="text-[9px] text-muted-foreground font-medium">{c.name}</span>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Save */}
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={handleSaveForm}
+                  disabled={!formName.trim()}
+                  className="w-full gradient-primary text-primary-foreground py-4 rounded-2xl font-bold text-[15px] disabled:opacity-40 flex items-center justify-center gap-2"
+                  style={{ boxShadow: "var(--shadow-glow-blue)" }}
+                >
+                  <Check size={18} />
+                  {editingBlock ? "Guardar cambios" : "Agregar bloque"}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

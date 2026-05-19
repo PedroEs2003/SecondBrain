@@ -1,8 +1,9 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { parseSupabaseError } from '@/lib/supabaseError'
+import { localDateStr } from '@/lib/utils'
 import { tareasService } from '@/services/supabaseService'
-import { supabase } from '@/integrations/supabase/client'
 import type { Tarea } from '@/types'
 
 export const useTareas = () => {
@@ -11,6 +12,8 @@ export const useTareas = () => {
   const { data: tareas = [], isLoading } = useQuery({
     queryKey: ['tareas'],
     queryFn: tareasService.getTareas,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   })
 
   const crear = useMutation({
@@ -19,14 +22,25 @@ export const useTareas = () => {
       queryClient.invalidateQueries({ queryKey: ['tareas'] })
       toast.success('Tarea creada')
     },
-    onError: () => toast.error('Error al crear tarea'),
+    onError: (err) => toast.error(`Error al crear tarea: ${parseSupabaseError(err)}`),
   })
 
   const actualizar = useMutation({
     mutationFn: ({ id, updates }: { id: number; updates: Partial<Tarea> }) =>
       tareasService.updateTarea(id, updates),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tareas'] }),
-    onError: () => toast.error('Error al actualizar tarea'),
+    onMutate: async ({ id, updates }) => {
+      await queryClient.cancelQueries({ queryKey: ['tareas'] })
+      const previous = queryClient.getQueryData<Tarea[]>(['tareas'])
+      queryClient.setQueryData<Tarea[]>(['tareas'], (old = []) =>
+        old.map(t => t.id === id ? { ...t, ...updates } : t)
+      )
+      return { previous }
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(['tareas'], context.previous)
+      toast.error(`Error al actualizar tarea: ${parseSupabaseError(_err)}`)
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['tareas'] }),
   })
 
   const eliminar = useMutation({
@@ -35,7 +49,7 @@ export const useTareas = () => {
       queryClient.invalidateQueries({ queryKey: ['tareas'] })
       toast.success('Tarea eliminada')
     },
-    onError: () => toast.error('Error al eliminar tarea'),
+    onError: (err) => toast.error(`Error al eliminar tarea: ${parseSupabaseError(err)}`),
   })
 
   const tareasPendientes = useMemo(
@@ -45,9 +59,10 @@ export const useTareas = () => {
 
   const tareasVencidas = useMemo(
     () =>
-      tareas.filter(
-        (t) => !t.completada && t.fecha_limite && new Date(t.fecha_limite) < new Date(),
-      ),
+      tareas.filter((t) => {
+        if (t.completada || !t.fecha_limite) return false
+        return t.fecha_limite.slice(0, 10) < localDateStr()
+      }),
     [tareas],
   )
 
@@ -60,16 +75,6 @@ export const useTareas = () => {
     if (tareas.length === 0) return 0
     return Math.round((tareas.filter((t) => t.completada).length / tareas.length) * 100)
   }, [tareas])
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('tareas-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tareas' }, () => {
-        queryClient.invalidateQueries({ queryKey: ['tareas'] })
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [queryClient])
 
   return {
     tareas,

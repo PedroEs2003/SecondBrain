@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useDeferredValue } from "react";
 import { motion, AnimatePresence, PanInfo } from "framer-motion";
+import { useFirstVisit } from "@/hooks/useFirstVisit";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNotas } from "@/hooks/useNotas";
 import {
@@ -108,10 +109,16 @@ const NotasPage = () => {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearch = useDeferredValue(searchQuery);
   const [showSearch, setShowSearch] = useState(false);
   const [filterCategory, setFilterCategory] = useState<NoteCategory | "all">("all");
   const [sortBy, setSortBy] = useState<"recent" | "alpha">("recent");
   const [swipedId, setSwipedId] = useState<number | null>(null);
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+
+  useEffect(() => {
+    window.dispatchEvent(new Event(showAdd || !!selectedNote ? 'modal-open' : 'modal-close'))
+  }, [showAdd, selectedNote])
 
   // New note form
   const [newTitle, setNewTitle] = useState("");
@@ -127,8 +134,8 @@ const NotasPage = () => {
 
   const filteredNotes = useMemo(() => {
     let result = [...notes];
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    if (deferredSearch.trim()) {
+      const q = deferredSearch.toLowerCase();
       result = result.filter(n =>
         n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q)
       );
@@ -142,7 +149,8 @@ const NotasPage = () => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
     return result;
-  }, [notes, searchQuery, filterCategory, sortBy]);
+  }, [notes, deferredSearch, filterCategory, sortBy]);
+  const isFirst = useFirstVisit('notas')
 
   if (isLoading) {
     return (
@@ -214,8 +222,11 @@ const NotasPage = () => {
 
   // ── Swipe ──
   const handleDragEnd = (id: number, _: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    if (info.offset.x < -80) setSwipedId(id);
-    else if (info.offset.x > 80) { togglePin(id); setSwipedId(null); }
+    const { offset, velocity } = info;
+    const isSwipeLeft = offset.x < -60 || (offset.x < -20 && velocity.x < -300);
+    const isSwipeRight = offset.x > 60 || (offset.x > 20 && velocity.x > 300);
+    if (isSwipeLeft) setSwipedId(id);
+    else if (isSwipeRight) { togglePin(id); setSwipedId(null); }
     else setSwipedId(null);
   };
 
@@ -225,7 +236,7 @@ const NotasPage = () => {
   };
 
   return (
-    <motion.div variants={stagger} initial="hidden" animate="show" className="px-4 pt-12 pb-24">
+    <motion.div variants={stagger} initial={isFirst ? "hidden" : "show"} animate="show" className="px-4 pt-12 pb-24">
       {/* Header */}
       <motion.div variants={fadeUp} className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
@@ -307,21 +318,21 @@ const NotasPage = () => {
           <div className="w-8 h-8 rounded-xl bg-primary/15 flex items-center justify-center mb-1.5 mx-auto">
             <FileText size={14} className="text-primary" />
           </div>
-          <p className="text-lg font-extrabold"><AnimatedCounter target={notes.length} /></p>
+          <p className="text-lg font-extrabold"><AnimatedCounter animated={isFirst} target={notes.length} /></p>
           <p className="text-[10px] text-muted-foreground font-medium">Notas</p>
         </div>
         <div className="glass-card p-3.5 text-center">
           <div className="w-8 h-8 rounded-xl bg-warning/15 flex items-center justify-center mb-1.5 mx-auto">
             <PenTool size={14} className="text-warning" />
           </div>
-          <p className="text-lg font-extrabold"><AnimatedCounter target={totalWords} /></p>
+          <p className="text-lg font-extrabold"><AnimatedCounter animated={isFirst} target={totalWords} /></p>
           <p className="text-[10px] text-muted-foreground font-medium">Palabras</p>
         </div>
         <div className="glass-card p-3.5 text-center">
           <div className="w-8 h-8 rounded-xl bg-purple/15 flex items-center justify-center mb-1.5 mx-auto">
             <Pin size={14} className="text-purple" />
           </div>
-          <p className="text-lg font-extrabold"><AnimatedCounter target={pinnedCount} /></p>
+          <p className="text-lg font-extrabold"><AnimatedCounter animated={isFirst} target={pinnedCount} /></p>
           <p className="text-[10px] text-muted-foreground font-medium">Fijadas</p>
         </div>
       </motion.div>
@@ -359,119 +370,124 @@ const NotasPage = () => {
         ← Desliza para eliminar · Desliza para fijar →
       </motion.p>
 
-      {/* Notes Masonry */}
-      <motion.div variants={fadeUp} className="columns-2 gap-3">
-        <AnimatePresence>
-          {filteredNotes.map((note, i) => (
-            <motion.div
-              key={note.id}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
-              transition={{ delay: 0.1 + i * 0.05 }}
-              className="mb-3 break-inside-avoid relative"
+      {/* Dismiss swipe overlay */}
+      {swipedId !== null && (
+        <div
+          className="fixed inset-0 z-[9]"
+          onClick={() => setSwipedId(null)}
+        />
+      )}
+
+      {/* Notes Masonry — dos columnas explícitas (columns-2 CSS rompía stacking contexts con Framer Motion) */}
+      {(() => {
+        const renderNote = (note: Note, i: number) => (
+          <motion.div
+            key={note.id}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+            transition={{ delay: 0.1 + i * 0.05 }}
+            className="relative"
+          >
+            {/* Swipe backgrounds — solo visibles al arrastrar */}
+            {draggingId === note.id && (
+              <>
+                <div className="absolute inset-0 rounded-[calc(var(--radius)+4px)] bg-destructive/20 flex items-center justify-end pr-4">
+                  <Trash2 size={18} className="text-destructive" />
+                </div>
+                <div className="absolute inset-0 rounded-[calc(var(--radius)+4px)] bg-purple/20 flex items-center pl-4">
+                  <Pin size={18} className="text-purple" />
+                </div>
+              </>
+            )}
+
+            <motion.button
+              drag="x"
+              dragSnapToOrigin
+              dragElastic={0.3}
+              dragMomentum={false}
+              onDragStart={() => setDraggingId(note.id)}
+              onDragEnd={(_, info) => { setDraggingId(null); handleDragEnd(note.id, _, info); }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => {
+                if (swipedId === note.id) { setSwipedId(null); return; }
+                if (!swipedId) setSelectedNote(note);
+              }}
+              className={`glass-card-hover p-4 w-full text-left relative z-10 ${
+                i % 3 === 0 ? "min-h-[170px]" : "min-h-[130px]"
+              }`}
+              style={getNoteStyle(note.noteColor)}
             >
-              {/* Delete background */}
-              <div className="absolute inset-0 rounded-[calc(var(--radius)+4px)] bg-destructive/20 flex items-center justify-end pr-4">
-                <Trash2 size={18} className="text-destructive" />
-              </div>
-              {/* Pin background */}
-              <div className="absolute inset-0 rounded-[calc(var(--radius)+4px)] bg-purple/20 flex items-center pl-4">
-                <Pin size={18} className="text-purple" />
-              </div>
-
-              <motion.button
-                drag="x"
-                dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.4}
-                onDragEnd={(_, info) => handleDragEnd(note.id, _, info)}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => { if (!swipedId) setSelectedNote(note); }}
-                className={`glass-card-hover p-4 w-full text-left relative z-10 ${
-                  i % 3 === 0 ? "min-h-[170px]" : "min-h-[130px]"
-                }`}
-                style={getNoteStyle(note.noteColor)}
-              >
-                {/* Pin indicator */}
-                {note.pinned && (
-                  <div className="absolute top-2.5 right-2.5">
-                    <Pin size={12} className="text-purple" />
-                  </div>
-                )}
-
-                {/* Category icon */}
-                <div className={`w-8 h-8 rounded-xl ${categoryConfig[note.category].bg} flex items-center justify-center mb-2.5`}>
-                  {(() => {
-                    const CatIcon = categoryConfig[note.category].icon;
-                    return <CatIcon size={14} className={categoryConfig[note.category].color} />;
-                  })()}
+              {note.pinned && (
+                <div className="absolute top-2.5 right-2.5">
+                  <Pin size={12} className="text-purple" />
                 </div>
-
-                <h3 className="font-bold text-[14px] mb-1 leading-tight">{note.title}</h3>
-                <p className="text-[12px] text-muted-foreground line-clamp-3 leading-relaxed">{note.body}</p>
-
-                {/* Checklist preview */}
-                {note.checklist.length > 0 && (
-                  <div className="mt-2 space-y-0.5">
-                    {note.checklist.slice(0, 3).map(item => (
-                      <div key={item.id} className="flex items-center gap-1.5">
-                        {item.checked ? (
-                          <CheckSquare size={10} className="text-primary shrink-0" />
-                        ) : (
-                          <Square size={10} className="text-muted-foreground/50 shrink-0" />
-                        )}
-                        <span className={`text-[10px] truncate ${item.checked ? "line-through text-muted-foreground/50" : "text-muted-foreground"}`}>
-                          {item.text}
-                        </span>
-                      </div>
-                    ))}
-                    {note.checklist.length > 3 && (
-                      <p className="text-[9px] text-muted-foreground/40 pl-4">+{note.checklist.length - 3} más</p>
-                    )}
-                  </div>
-                )}
-
-                <div className="mt-2.5 flex items-center justify-between">
-                  <p className="text-[9px] text-muted-foreground flex items-center gap-1 font-medium">
-                    <Clock size={9} /> {formatTimeAgo(note.createdAt)}
-                  </p>
-                  <span className={`text-[9px] font-bold ${categoryConfig[note.category].color}`}>
-                    {categoryConfig[note.category].label}
-                  </span>
+              )}
+              <div className={`w-8 h-8 rounded-xl ${categoryConfig[note.category].bg} flex items-center justify-center mb-2.5`}>
+                {(() => { const CatIcon = categoryConfig[note.category].icon; return <CatIcon size={14} className={categoryConfig[note.category].color} />; })()}
+              </div>
+              <h3 className="font-bold text-[14px] mb-1 leading-tight">{note.title}</h3>
+              <p className="text-[12px] text-muted-foreground line-clamp-3 leading-relaxed">{note.body}</p>
+              {note.checklist.length > 0 && (
+                <div className="mt-2 space-y-0.5">
+                  {note.checklist.slice(0, 3).map(item => (
+                    <div key={item.id} className="flex items-center gap-1.5">
+                      {item.checked ? <CheckSquare size={10} className="text-primary shrink-0" /> : <Square size={10} className="text-muted-foreground/50 shrink-0" />}
+                      <span className={`text-[10px] truncate ${item.checked ? "line-through text-muted-foreground/50" : "text-muted-foreground"}`}>{item.text}</span>
+                    </div>
+                  ))}
+                  {note.checklist.length > 3 && <p className="text-[9px] text-muted-foreground/40 pl-4">+{note.checklist.length - 3} más</p>}
                 </div>
-              </motion.button>
+              )}
+              <div className="mt-2.5 flex items-center justify-between">
+                <p className="text-[9px] text-muted-foreground flex items-center gap-1 font-medium">
+                  <Clock size={9} /> {formatTimeAgo(note.createdAt)}
+                </p>
+                <span className={`text-[9px] font-bold ${categoryConfig[note.category].color}`}>{categoryConfig[note.category].label}</span>
+              </div>
+            </motion.button>
 
-              {/* Swiped delete action */}
+            <AnimatePresence>
+              {swipedId === note.id && (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex gap-2"
+                >
+                  <motion.button whileTap={{ scale: 0.85 }} onClick={() => deleteNote(note.id)}
+                    className="w-10 h-10 rounded-full bg-destructive flex items-center justify-center"
+                    style={{ boxShadow: 'var(--shadow-glow-red)' }}>
+                    <Trash2 size={16} className="text-destructive-foreground" />
+                  </motion.button>
+                  <motion.button whileTap={{ scale: 0.85 }} onClick={() => setSwipedId(null)}
+                    className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
+                    <X size={14} />
+                  </motion.button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        );
+
+        const leftNotes = filteredNotes.filter((_, i) => i % 2 === 0);
+        const rightNotes = filteredNotes.filter((_, i) => i % 2 !== 0);
+
+        return (
+          <motion.div variants={fadeUp} className="grid grid-cols-2 gap-3 items-start">
+            <div className="flex flex-col gap-3">
               <AnimatePresence>
-                {swipedId === note.id && (
-                  <motion.div
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex gap-2"
-                  >
-                    <motion.button
-                      whileTap={{ scale: 0.85 }}
-                      onClick={() => deleteNote(note.id)}
-                      className="w-10 h-10 rounded-full bg-destructive flex items-center justify-center"
-                      style={{ boxShadow: 'var(--shadow-glow-red)' }}
-                    >
-                      <Trash2 size={16} className="text-destructive-foreground" />
-                    </motion.button>
-                    <motion.button
-                      whileTap={{ scale: 0.85 }}
-                      onClick={() => setSwipedId(null)}
-                      className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center"
-                    >
-                      <X size={14} />
-                    </motion.button>
-                  </motion.div>
-                )}
+                {leftNotes.map((note, colIdx) => renderNote(note, colIdx * 2))}
               </AnimatePresence>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </motion.div>
+            </div>
+            <div className="flex flex-col gap-3">
+              <AnimatePresence>
+                {rightNotes.map((note, colIdx) => renderNote(note, colIdx * 2 + 1))}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        );
+      })()}
 
       {/* Empty state */}
       {filteredNotes.length === 0 && (

@@ -1,8 +1,8 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { parseSupabaseError } from '@/lib/supabaseError'
 import { deudasService } from '@/services/supabaseService'
-import { supabase } from '@/integrations/supabase/client'
 import type { Deuda } from '@/types'
 
 export const useDeudas = () => {
@@ -11,6 +11,8 @@ export const useDeudas = () => {
   const { data: deudas = [], isLoading } = useQuery({
     queryKey: ['deudas'],
     queryFn: deudasService.getDeudas,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   })
 
   const crear = useMutation({
@@ -19,14 +21,14 @@ export const useDeudas = () => {
       queryClient.invalidateQueries({ queryKey: ['deudas'] })
       toast.success('Deuda registrada')
     },
-    onError: () => toast.error('Error al registrar deuda'),
+    onError: (err) => toast.error(`Error al registrar deuda: ${parseSupabaseError(err)}`),
   })
 
   const actualizar = useMutation({
     mutationFn: ({ id, updates }: { id: number; updates: Partial<Deuda> }) =>
       deudasService.updateDeuda(id, updates),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['deudas'] }),
-    onError: () => toast.error('Error al actualizar deuda'),
+    onError: (err) => toast.error(`Error al actualizar deuda: ${parseSupabaseError(err)}`),
   })
 
   const eliminar = useMutation({
@@ -35,18 +37,28 @@ export const useDeudas = () => {
       queryClient.invalidateQueries({ queryKey: ['deudas'] })
       toast.success('Deuda eliminada')
     },
-    onError: () => toast.error('Error al eliminar deuda'),
+    onError: (err) => toast.error(`Error al eliminar deuda: ${parseSupabaseError(err)}`),
   })
 
   const deudasActivas = useMemo(() => deudas.filter((d) => !d.pagada), [deudas])
 
   const totalDebo = useMemo(
-    () => deudasActivas.filter((d) => d.tipo === 'debo').reduce((s, d) => s + d.monto, 0),
+    () => deudasActivas
+      .filter((d) => d.tipo === 'debo')
+      .reduce((s, d) => {
+        const pagado = (d.payments ?? []).reduce((ps, p) => ps + p.monto, 0)
+        return s + Math.max(0, d.monto - pagado)
+      }, 0),
     [deudasActivas],
   )
 
   const totalMeDeben = useMemo(
-    () => deudasActivas.filter((d) => d.tipo === 'me_deben').reduce((s, d) => s + d.monto, 0),
+    () => deudasActivas
+      .filter((d) => d.tipo === 'me_deben')
+      .reduce((s, d) => {
+        const pagado = (d.payments ?? []).reduce((ps, p) => ps + p.monto, 0)
+        return s + Math.max(0, d.monto - pagado)
+      }, 0),
     [deudasActivas],
   )
 
@@ -56,16 +68,6 @@ export const useDeudas = () => {
     const total = totalDebo + totalMeDeben
     return total === 0 ? 0 : Math.round((totalDebo / total) * 100)
   }, [totalDebo, totalMeDeben])
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('deudas-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'deudas' }, () => {
-        queryClient.invalidateQueries({ queryKey: ['deudas'] })
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [queryClient])
 
   return {
     deudas,

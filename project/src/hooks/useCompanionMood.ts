@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-export type Mood = "happy" | "sleepy" | "excited" | "worried" | "chill" | "rain" | "sunny" | "celebrating";
+export type Mood = "happy" | "sleepy" | "excited" | "worried" | "chill" | "rain" | "sunny" | "celebrating" | "frio" | "calor" | "triste";
 
 export type WeatherInfo = {
   temp: number;
@@ -106,6 +106,10 @@ export function useCompanionMood() {
 
       if (w?.isRain) {
         setBaseMood("rain");
+      } else if (w && w.temp <= 14) {
+        setBaseMood("frio");
+      } else if (w && w.temp >= 26) {
+        setBaseMood("calor");
       } else if (w?.isSunny && (tod === "morning" || tod === "afternoon")) {
         setBaseMood("sunny");
       } else {
@@ -118,18 +122,23 @@ export function useCompanionMood() {
             setBaseMood("excited");
             break;
           case "afternoon":
-            setBaseMood("chill");
-            break;
           case "night":
-            setBaseMood("sleepy");
+            setBaseMood("chill");
             break;
         }
       }
     });
 
-    // Refresh every 15 min
+    // Refresh every 15 min — also update baseMood from new weather
     const interval = setInterval(() => {
-      fetchWeather().then(setWeather);
+      fetchWeather().then(w => {
+        if (!w) return;
+        setWeather(w);
+        if (w.isRain) setBaseMood("rain");
+        else if (w.temp <= 14) setBaseMood("frio");
+        else if (w.temp >= 26) setBaseMood("calor");
+        else if (w.isSunny) setBaseMood("sunny");
+      });
     }, 15 * 60 * 1000);
 
     return () => clearInterval(interval);
